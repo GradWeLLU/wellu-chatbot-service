@@ -150,3 +150,4 @@ def get_context(token: str):
     except Exception as e:
         logger.error(f"Failed to build context: {e}")
         return {"error": "Could not build user context right now."}
+    

@@ -2,9 +2,13 @@
 # Real integration with Spring Boot microservices
 
 import requests
+from datetime import date as date_module
+import os
 
 USER_SERVICE_URL = "http://localhost:8081"
 WORKOUT_NUTRITION_SERVICE_URL = "http://localhost:8082"
+FDC_API_KEY = os.getenv("FDC_API_KEY")
+FDC_BASE_URL = "https://api.nal.usda.gov/fdc/v1/foods/search"
 
 
 def _headers(token: str):
@@ -84,6 +88,86 @@ def get_progress(token: str):
         return {}
 
 
+def get_today_meals(token: str):
+    """
+    Returns today's meal log entries, if any exist.
+    """
+    try:
+        response = requests.get(f"{USER_SERVICE_URL}/mealLogs", headers=_headers(token))
+        response.raise_for_status()
+        logs = response.json()
+
+        today = date_module.today().isoformat()
+        for log in logs:
+            if log.get("mealDate") == today:
+                return log.get("entries", [])
+
+        return []
+
+    except requests.exceptions.RequestException as e:
+        print(f"[BACKEND ERROR] get_today_meals failed: {e}")
+        return []
+
+
+def get_today_workouts(token: str):
+    """
+    Returns today's exercise log entries, if any exist.
+    """
+    try:
+        response = requests.get(f"{USER_SERVICE_URL}/exerciseLogs", headers=_headers(token))
+        response.raise_for_status()
+        logs = response.json()
+
+        today = date_module.today().isoformat()
+        for log in logs:
+            if log.get("workoutDate") == today:
+                return log.get("entries", [])
+
+        return []
+
+    except requests.exceptions.RequestException as e:
+        print(f"[BACKEND ERROR] get_today_workouts failed: {e}")
+        return []
+
+
+def search_food_nutrition(food_name: str):
+    """
+    Searches USDA FoodData Central for nutritional info.
+    Returns the best match's calories/protein/carbs/fats 
+    per typical serving, or None if no good match found.
+    """
+    try:
+        response = requests.get(
+            FDC_BASE_URL,
+            params={
+                "api_key": FDC_API_KEY,
+                "query": food_name,
+                "pageSize": 1
+            }
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        foods = data.get("foods", [])
+        if not foods:
+            return None
+
+        food = foods[0]
+        nutrients = {n["nutrientName"]: n["value"] for n in food.get("foodNutrients", [])}
+
+        return {
+            "name": food.get("description", food_name),
+            "calories": nutrients.get("Energy", None),
+            "protein": nutrients.get("Protein", None),
+            "carbs": nutrients.get("Carbohydrate, by difference", None),
+            "fats": nutrients.get("Total lipid (fat)", None)
+        }
+
+    except requests.exceptions.RequestException as e:
+        print(f"[FDC API ERROR] search_food_nutrition failed: {e}")
+        return None
+
+
 # ─────────────────────────────────────────
 # HELPER — find or create today's log
 # ─────────────────────────────────────────
@@ -96,7 +180,7 @@ def _get_or_create_exercise_log(token: str, date: str):
 
         for log in logs:
             if log.get("workoutDate") == date:
-                return log.get("id") or log.get("logId")
+                return log.get("id")
 
         create_response = requests.post(
             f"{USER_SERVICE_URL}/exerciseLogs",
@@ -105,7 +189,7 @@ def _get_or_create_exercise_log(token: str, date: str):
         )
         create_response.raise_for_status()
         new_log = create_response.json()
-        return new_log.get("id") or new_log.get("logId")
+        return new_log.get("id")
 
     except requests.exceptions.RequestException as e:
         print(f"[BACKEND ERROR] _get_or_create_exercise_log failed: {e}")
@@ -120,7 +204,7 @@ def _get_or_create_meal_log(token: str, date: str):
 
         for log in logs:
             if log.get("mealDate") == date:
-                return log.get("id") 
+                return log.get("id")
 
         create_response = requests.post(
             f"{USER_SERVICE_URL}/mealLogs",
@@ -129,7 +213,7 @@ def _get_or_create_meal_log(token: str, date: str):
         )
         create_response.raise_for_status()
         new_log = create_response.json()
-        return new_log.get("id") 
+        return new_log.get("id")
 
     except requests.exceptions.RequestException as e:
         print(f"[BACKEND ERROR] _get_or_create_meal_log failed: {e}")
